@@ -1,0 +1,1369 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>競馬予想</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0;}
+body{background:#0e0e0e;color:#ddd;font-family:-apple-system,sans-serif;font-size:15px;line-height:1.5;padding:12px;}
+h1{font-size:1.1rem;margin-bottom:10px;color:#fff;}
+textarea{width:100%;height:140px;background:#1a1a1a;color:#ddd;border:1px solid #333;border-radius:8px;padding:10px;font-size:13px;resize:vertical;}
+.btns{display:flex;gap:8px;margin:10px 0;}
+button{flex:1;border:none;border-radius:8px;padding:13px;font-weight:bold;font-size:1rem;cursor:pointer;}
+#go{background:#2563eb;color:#fff;}
+#clr{background:#333;color:#aaa;flex:0 0 80px;}
+.sec{font-size:0.95rem;font-weight:bold;color:#fff;margin:16px 0 8px;border-left:3px solid #2563eb;padding-left:8px;}
+/* レース情報 */
+.rinfo{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-bottom:4px;}
+.rv{color:#f0c040;font-weight:bold;}
+/* 展開予測 */
+.pace-box{background:#1a1a1a;border:1px solid #2a2a2a;border-radius:8px;padding:12px;}
+.pace-val{font-size:1.15rem;font-weight:bold;margin-bottom:6px;}
+.pace-slow{color:#cc88ff;} .pace-mid{color:#66ccff;} .pace-high{color:#ff8844;}
+.pace-note{font-size:0.86rem;color:#bbb;margin-top:4px;}
+/* 予想印カード */
+.sum-row{background:#1a1a1a;border:1px solid #2a2a2a;border-radius:8px;padding:10px 12px;margin-bottom:7px;}
+.sum-top{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+.s-mark{font-size:1.5rem;font-weight:bold;width:1.9rem;text-align:center;flex-shrink:0;}
+.m0{color:#ff4444;} .m1{color:#4488ff;} .m2{color:#44cc44;} .m3{color:#f0c040;} .m4{color:#cc88ff;}
+.s-name{font-size:1rem;font-weight:bold;color:#fff;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.s-jockey{font-size:0.82rem;color:#999;}
+.s-odds{font-size:0.85rem;color:#f0c040;font-weight:bold;}
+.s-pop{font-size:0.8rem;color:#888;}
+.s-tags{display:flex;flex-wrap:wrap;gap:5px;margin-top:7px;}
+.tag{font-size:0.76rem;padding:3px 8px;border-radius:10px;background:#262626;color:#bbb;}
+.tag-pos{background:#13301a;color:#7c5;}
+.tag-fit{background:#102438;color:#6bd;}
+.tag-abil{background:#2a1226;color:#d8c;}
+.tag-makuri{background:#2a2a10;color:#cc5;}
+.runs{margin-top:8px;font-size:0.76rem;color:#888;display:flex;flex-wrap:wrap;gap:4px 10px;}
+.run-front{color:#5c5;} .run-mid{color:#999;} .run-back{color:#666;}
+/* テーブル */
+.tbl-scroll{overflow-x:auto;-webkit-overflow-scrolling:touch;}
+table{border-collapse:collapse;width:100%;font-size:0.8rem;white-space:nowrap;}
+th,td{border:1px solid #333;padding:6px 7px;text-align:center;color:#e8e8e8;}
+th{background:#222;color:#cfcfcf;font-weight:bold;}
+td{background:#161616;}
+.tdn{text-align:left;color:#fff;font-weight:bold;max-width:8em;overflow:hidden;text-overflow:ellipsis;}
+.tdj{color:#cfcfcf;}
+.hi{color:#5c5;font-weight:bold;} .lo{color:#666;}
+/* 枠色 */
+.waku{display:inline-flex;align-items:center;justify-content:center;width:1.6rem;height:1.6rem;border-radius:50%;font-weight:bold;font-size:0.8rem;flex-shrink:0;}
+.w1{background:#fff;color:#000;} .w2{background:#000;color:#fff;border:1px solid #555;}
+.w3{background:#e33;color:#fff;} .w4{background:#36c;color:#fff;} .w5{background:#ec0;color:#000;}
+.w6{background:#2a2;color:#fff;} .w7{background:#f80;color:#000;} .w8{background:#e9a;color:#000;}
+</style>
+</head>
+<body>
+<h1>競馬予想</h1>
+<textarea id="inp" placeholder="ウマークスの前5走テキストを貼り付け"></textarea>
+<div class="btns">
+  <button id="go">予想</button>
+  <button id="clr">クリア</button>
+</div>
+<div id="ri"></div>
+<div id="out"></div>
+
+<script>
+// ============================================================
+// パーサー：ウマークスの前5走テキストを構造化
+// ============================================================
+// コーナー通過順位の文字列を数値配列に分解する。
+// 実際に通ったコーナー数は通過順データの「区切り」で決まる。だが連続する数字列なので
+// 桁の区切りが曖昧。そこで nc（そのレースの想定コーナー数）をヒントに、桁数と整合させる。
+// 直線競馬（新潟芝1000等）は通過順が無く、空配列を返す。
+// 例 (nc=2)"11"→[1,1] "1211"→[12,11] / (nc=4)"2223"→[2,2,2,3] "12111110"→[12,11,11,10]
+function parseCorners(str,nc,fieldSize){
+  if(!str)return [];
+  str=(''+str).trim();
+  if(!/^\d+$/.test(str))return [];
+  const len=str.length;
+  if(nc===0)return [];                       // 直線競馬：コーナーなし
+  // 1) 桁数がncと一致＝全部1桁
+  if(len===nc)return str.split('').map(Number);
+  // 2) 桁数がnc*2＝全部2桁（10番台以上が並ぶ）
+  if(len===nc*2){
+    const r=[];for(let k=0;k<len;k+=2)r.push(parseInt(str.substr(k,2),10));return r;
+  }
+  // 3) 混在：先頭が1か2で、残り桁数を見て2桁にしないとnc個に収まらない場合に2桁とする
+  if(nc>0){
+    const twoDigitCount=str.length-nc;   // 2桁にすべき個数
+    if(twoDigitCount<=0)return str.split('').map(Number).slice(0,nc);
+    const res=[];let i=0;let used2=0;
+    while(i<str.length&&res.length<nc){
+      const remainingSlots=nc-res.length;
+      const remainingChars=str.length-i;
+      if(used2<twoDigitCount && (str[i]==='1'||str[i]==='2') && remainingChars>remainingSlots){
+        res.push(parseInt(str.substr(i,2),10));i+=2;used2++;
+      }else{
+        res.push(parseInt(str[i],10));i+=1;
+      }
+    }
+    // 保険：出走頭数を超える非現実的な順位が出たら桁の読み違いとみなし1桁ずつで読み直す
+    if(fieldSize&&res.some(v=>v>fieldSize+1))return str.split('').map(Number);
+    return res;
+  }
+  // nc不明：素直に1桁ずつ
+  return str.split('').map(Number);
+}
+// ── JRA各コースの実コーナー数テーブル（引き出し）──
+// キー: "競馬場|芝ダ|距離" 値: そのコースで実際に通るコーナーの数。
+// 出典の数値に基づく。芝1600や1800は競馬場で2/3/4と異なるため個別に持つ。
+// 内回り/外回りの区別は距離で代表値を採用。新潟芝1000は直線=0。
+const JRA_CORNERS={
+  // 東京（ダートはバックストレッチ発走で1300-1600が2、長距離4）
+  '東京|ダ|1300':2,'東京|ダ|1400':2,'東京|ダ|1600':2,'東京|ダ|2100':4,'東京|ダ|2400':4,
+  '東京|芝|1400':2,'東京|芝|1600':2,'東京|芝|1800':3,'東京|芝|2000':3,'東京|芝|2300':4,'東京|芝|2400':4,'東京|芝|2500':4,'東京|芝|3400':6,
+  // 中山
+  '中山|ダ|1200':2,'中山|ダ|1800':4,'中山|ダ|2400':6,'中山|ダ|2500':6,
+  '中山|芝|1200':2,'中山|芝|1600':3,'中山|芝|1800':4,'中山|芝|2000':4,'中山|芝|2200':4,'中山|芝|2500':4,'中山|芝|3600':8,
+  // 阪神
+  '阪神|ダ|1200':2,'阪神|ダ|1400':2,'阪神|ダ|1800':4,'阪神|ダ|2000':4,
+  '阪神|芝|1200':2,'阪神|芝|1400':2,'阪神|芝|1600':2,'阪神|芝|1800':2,'阪神|芝|2000':4,'阪神|芝|2200':4,'阪神|芝|2400':4,'阪神|芝|3000':6,
+  // 京都
+  '京都|ダ|1200':2,'京都|ダ|1400':2,'京都|ダ|1800':4,'京都|ダ|1900':4,
+  '京都|芝|1200':2,'京都|芝|1400':2,'京都|芝|1600':2,'京都|芝|2000':4,'京都|芝|2200':4,'京都|芝|3000':6,
+  // 中京
+  '中京|ダ|1200':2,'中京|ダ|1400':2,'中京|ダ|1800':4,'中京|ダ|1900':4,
+  '中京|芝|1200':2,'中京|芝|1300':2,'中京|芝|1400':2,'中京|芝|1600':3,'中京|芝|2000':4,'中京|芝|2200':4,'中京|芝|3000':6,
+  // 新潟（芝1000は直線=0、外回りマイル系は2）
+  '新潟|ダ|1200':2,'新潟|ダ|1800':4,
+  '新潟|芝|1000':0,'新潟|芝|1200':2,'新潟|芝|1400':2,'新潟|芝|1600':2,'新潟|芝|1800':2,'新潟|芝|2000':4,'新潟|芝|2200':4,'新潟|芝|2400':4,
+  // 札幌
+  '札幌|ダ|1000':2,'札幌|ダ|1700':4,'札幌|ダ|2400':6,
+  '札幌|芝|1200':2,'札幌|芝|1500':3,'札幌|芝|1800':4,'札幌|芝|2000':4,'札幌|芝|2600':6,
+  // 函館
+  '函館|ダ|1000':2,'函館|ダ|1700':4,'函館|ダ|2400':6,
+  '函館|芝|1200':2,'函館|芝|1800':4,'函館|芝|2000':4,'函館|芝|2600':6,
+  // 福島
+  '福島|ダ|1150':2,'福島|ダ|1700':4,'福島|ダ|2400':6,
+  '福島|芝|1200':2,'福島|芝|1800':4,'福島|芝|2000':4,'福島|芝|2600':6,
+  // 小倉
+  '小倉|ダ|1000':2,'小倉|ダ|1700':4,'小倉|ダ|2400':6,
+  '小倉|芝|1200':2,'小倉|芝|1800':4,'小倉|芝|2000':4,'小倉|芝|2600':6,
+};
+// そのレースで実際に通るコーナー数。テーブルにあればそれを使い、なければ距離から推定。
+// ── JRA重賞レース名→グレードの辞書（引き出し）──
+// データにグレード列が無い場合や、レース名だけで格を判定するために使う。G1=9/G2=8/G3=7。
+const JRA_GRADE={
+  'フェブラリーステークス':9,'高松宮記念':9,'大阪杯':9,'桜花賞':9,'皐月賞':9,'天皇賞春':9,'天皇賞秋':9,
+  'NHKマイルカップ':9,'ヴィクトリアマイル':9,'オークス':9,'優駿牝馬':9,'日本ダービー':9,'東京優駿':9,
+  '安田記念':9,'宝塚記念':9,'スプリンターズステークス':9,'秋華賞':9,'菊花賞':9,'エリザベス女王杯':9,
+  'マイルチャンピオンシップ':9,'ジャパンカップ':9,'チャンピオンズカップ':9,'阪神ジュベナイルフィリーズ':9,
+  '朝日杯フューチュリティステークス':9,'ホープフルステークス':9,'有馬記念':9,
+  '東京大賞典':9,'帝王賞':9,'かしわ記念':9,'川崎記念':9,'JBCクラシック':9,'JBCスプリント':9,
+  '京都記念':8,'中山記念':8,'阪急杯':8,'金鯱賞':8,'フィリーズレビュー':8,'弥生賞':8,'スプリングステークス':8,
+  '日経賞':8,'阪神大賞典':8,'ニュージーランドトロフィー':8,'阪神牝馬ステークス':8,'マイラーズカップ':8,
+  '青葉賞':8,'京都新聞杯':8,'目黒記念':8,'京王杯スプリングカップ':8,'平安ステークス':8,'鳴尾記念':8,
+  'ステイヤーズステークス':8,'京都大賞典':8,'毎日王冠':8,'オールカマー':8,'神戸新聞杯':8,'セントライト記念':8,
+  'ローズステークス':8,'スワンステークス':8,'アルゼンチン共和国杯':8,'京阪杯':8,'札幌記念':8,
+  '東京スポーツ杯2歳ステークス':8,'デイリー杯2歳ステークス':8,'京王杯2歳ステークス':8,
+  'シルクロードステークス':7,'東京新聞杯':7,'きさらぎ賞':7,'クイーンカップ':7,'共同通信杯':7,'京都牝馬ステークス':7,
+  'ダイヤモンドステークス':7,'小倉大賞典':7,'アーリントンカップ':7,'中山牝馬ステークス':7,
+  'オーシャンステークス':7,'チューリップ賞':7,'フラワーカップ':7,'毎日杯':7,'マーチステークス':7,
+  'ファルコンステークス':7,'アンタレスステークス':7,'福島牝馬ステークス':7,
+  'マーメイドステークス':7,'ユニコーンステークス':7,'エプソムカップ':7,'函館スプリントステークス':7,
+  'CBC賞':7,'ラジオNIKKEI賞':7,'七夕賞':7,'中京記念':7,'プロキオンステークス':7,'アイビスサマーダッシュ':7,
+  'クイーンステークス':7,'関屋記念':7,'小倉記念':7,'エルムステークス':7,'北九州記念':7,'札幌2歳ステークス':7,
+  '新潟2歳ステークス':7,'キーンランドカップ':7,'新潟記念':7,'紫苑ステークス':7,'京成杯オータムハンデキャップ':7,
+  'シリウスステークス':7,'サウジアラビアロイヤルカップ':7,'府中牝馬ステークス':7,'富士ステークス':7,
+  'カシオペアステークス':7,'みやこステークス':7,'武蔵野ステークス':7,'ファンタジーステークス':7,'京都2歳ステークス':7,
+  'チャレンジカップ':7,'中日新聞杯':7,'カペラステークス':7,'ターコイズステークス':7,'愛知杯':7,'淀短距離ステークス':7,
+  '京成杯':7,'フェアリーステークス':7,'日経新春杯':7,'モルガナイトステークス':6,'淀短距離S':7,
+};
+function normRaceName(s){
+  if(!s)return '';
+  return s.replace(/\(\d+\/\d+\)/g,'').replace(/[（(].*?[）)]/g,'').replace(/\s/g,'')
+          .replace(/ステークス/g,'S').replace(/カップ/g,'C').replace(/ハンデキャップ/g,'H');
+}
+const JRA_GRADE_NORM={};
+for(const k in JRA_GRADE){ JRA_GRADE_NORM[normRaceName(k)]=JRA_GRADE[k]; }
+// クラス（グレード）を格の数値に変換。大きいほど格上。相手の質を表す。
+// 中央: G1=9 G2=8 G3=7 L=6 オープン=5 3勝=4 2勝=3 1勝=2 未勝利/新馬=1。不明は0。
+function classRank(grade,raceName){
+  const g=((grade||'')+' '+(raceName||'')).trim();
+  // ① グレード表記（データのグレード列）から判定。長い表記から順に。
+  if(/GⅢ|GIII|Jpn3|JpnⅢ/.test(g))return 7;
+  if(/GⅡ|GII|Jpn2|JpnⅡ/.test(g))return 8;
+  if(/GⅠ|GI(?![I])|Jpn1|JpnⅠ/.test(g))return 9;
+  if(/リステッド/.test(g)||/(^|[^A-Za-z])L([^A-Za-z]|$)/.test(g))return 6;
+  if(/オープン|ＯＰ|準オープン/.test(g))return 5;
+  if(/3勝|３勝|1600万/.test(g))return 4;
+  if(/2勝|２勝|1000万/.test(g))return 3;
+  if(/1勝|１勝|500万/.test(g))return 2;
+  if(/未勝利|新馬|メイクデビュー/.test(g))return 1;
+  // ② グレード表記が無い場合、レース名を重賞辞書で引く（クラシック・年1回G1も確定できる）
+  if(raceName){
+    const nk=normRaceName(raceName);
+    if(JRA_GRADE_NORM[nk]!=null)return JRA_GRADE_NORM[nk];
+    // 部分一致（前方）も試す
+    for(const k in JRA_GRADE_NORM){ if(nk&&(nk===k||(k.length>=4&&nk.startsWith(k)))) return JRA_GRADE_NORM[k]; }
+  }
+  return 0;
+}
+function numCorners(dist,vn,straightFlag,venueName,surface){
+  if(straightFlag)return 0;
+  const sf=surface==='芝'?'芝':'ダ';
+  const key=`${venueName}|${sf}|${dist}`;
+  if(JRA_CORNERS[key]!=null)return JRA_CORNERS[key];
+  // テーブル外（地方競馬など）は距離で推定
+  if(dist<=1400)return 2;
+  if(dist<=2200)return 4;
+  return 6;
+}
+// ── 競馬場コース特性（ダート直線長の概算・前残り傾向の判定に使う）──
+const COURSE_STRAIGHT={
+  '大井':386,'川崎':300,'船橋':308,'浦和':220,'門別':330,'名古屋':240,
+  '笠松':201,'園田':213,'姫路':230,'高知':200,'佐賀':200,'金沢':236,
+  '盛岡':300,'水沢':245,'東京':501,'中山':308,'阪神':353,'京都':329,
+  '中京':410,'新潟':354,'小倉':293,'函館':260,'札幌':264,'福島':296
+};
+function detectVenueKind(v){
+  if(['東京','中山','阪神','京都','中京','新潟','小倉','函館','札幌','福島'].some(x=>v&&v.includes(x)))return'jra';
+  return'local';
+}
+// 距離帯
+function distBand(dist){
+  if(dist<=1400)return'sprint';
+  if(dist<=1800)return'mile';
+  if(dist<=2100)return'mid';
+  return'long';
+}
+// 直線長から脚質の傾向を返す。直線長は前後の有利を決める主要因の一つだが、坂・内外回り・
+// 馬場まではこのデータに無いため、断定できる極端なコース（明確に短い／明確に長い）だけ
+// 強・弱を返し、中間帯は無理に決めつけず「中（どちらとも言い切らない）」とする。
+function frontBias(venueName,dist){
+  const s=COURSE_STRAIGHT[venueName]||300;
+  if(s<=250)return'強';    // 直線が明確に短い小回り＝前が残りやすい傾向
+  if(s>=470)return'弱';    // 直線が際立って長い＝差しが届きやすい傾向（東京・中京クラス）
+  return'中';              // それ以外は坂等の要素で変わり得るため断定しない
+}
+function median(arr){
+  const s=[...arr].filter(v=>v!=null&&!isNaN(v)).sort((x,y)=>x-y);
+  const n=s.length; if(!n)return 0;
+  return n%2?s[(n-1)/2]:(s[n/2-1]+s[n/2])/2;
+}
+
+function parseUmarks(text){
+  const lines=text.split('\n').map(l=>l.replace(/\s+$/,''));
+  const n=lines.length;
+  let raceDist=null,raceSurface='',raceTrack='',raceName='',raceTitle='',venueName='';
+  // ヘッダー（発走行に距離・種別・馬場）
+  let hatsousoIdx=-1;
+  for(let k=0;k<n;k++){
+    if(lines[k].includes('発走')){
+      const m=lines[k].match(/(\d+)m\s+(ダート|芝)\s+(良|稍重|重|不良)/);
+      if(m){raceDist=+m[1];raceSurface=m[2];raceTrack=m[3];hatsousoIdx=k;break;}
+    }
+  }
+  for(let k=0;k<(hatsousoIdx>=0?hatsousoIdx:n);k++){
+    if(/^\d+R$/.test(lines[k].trim()))raceName=lines[k].trim();
+  }
+  if(hatsousoIdx>=0){
+    for(let k=0;k<hatsousoIdx;k++){
+      const ln=lines[k].trim();
+      if(ln.match(/[特別賞SステークスＳ杯記念ｶｯﾌﾟ]/)&&!ln.includes('発走')&&!/^\d+R$/.test(ln))raceTitle=ln;
+    }
+  }
+  // 今回レースのクラス格を取得する。
+  // ① 発走行・タイトル行にグレード表記があればそれを使う。
+  // ② 無ければ、各馬の過去走データの中から「今回と同じレース名」を走った行を探し、
+  //    その行のグレード列を今回のクラスとして使う（推定でなく、データ内の事実から確定）。
+  let raceGradeText='';
+  if(hatsousoIdx>=0){
+    for(let k=0;k<=hatsousoIdx;k++){
+      const gm=lines[k].match(/(GⅠ|GⅡ|GⅢ|GI{1,3}|Jpn[ⅠⅡⅢI]+|リステッド|オープン|３勝|２勝|１勝|3勝|2勝|1勝|未勝利|新馬)/);
+      if(gm){raceGradeText=gm[1];break;}
+    }
+  }
+  // raceTitle（今回のレース名）を各走データ行から探す
+  if(!raceGradeText && raceTitle){
+    const titleKey=raceTitle.replace(/\s/g,'');
+    for(let k=hatsousoIdx;k<n;k++){
+      const cols2=lines[k].split('\t');
+      if(cols2.length<16)continue;
+      const lastCell=(cols2[cols2.length-1]||'').replace(/\(\d+\/\d+\)/,'').replace(/\s/g,'');
+      // レース名が完全一致したときだけ、その走のグレードを今回クラスとする（部分一致は誤マッチの元）
+      if(lastCell && lastCell===titleKey){
+        for(let ci=0;ci<cols2.length;ci++){
+          const cell=(cols2[ci]||'').trim();
+          if(/^(GⅢ|GIII|GⅡ|GII|GⅠ|GI|Jpn[ⅠⅡⅢI123]+|L|リステッド|オープン|[123]勝|未勝利|新馬)$/.test(cell)){raceGradeText=cell;break;}
+        }
+        if(raceGradeText)break;
+      }
+    }
+  }
+  const raceClass=classRank(raceGradeText,raceTitle);
+  const venueList=['大井','川崎','船橋','浦和','門別','名古屋','笠松','園田','姫路','高知','佐賀','金沢','盛岡','水沢','東京','中山','阪神','京都','中京','新潟','小倉','函館','札幌','福島'];
+  for(let k=0;k<Math.min(5,n);k++){
+    if(venueList.includes(lines[k].trim())){venueName=lines[k].trim();break;}
+  }
+  const vn=detectVenueKind(venueName);
+
+  function isHorseLine(l,nl){
+    if(!l||l.includes('kg'))return false;
+    if(!/^(\d{1,2})([ァ-ヶーｦ-ﾟ\u4e00-\u9fff].*)$/.test(l.trim()))return false;
+    return !!(nl&&nl.includes('kg'));
+  }
+  const horses=[];
+  let i=0;
+  while(i<n){
+    const line=lines[i].trim();
+    const next=lines[i+1]?lines[i+1].trim():'';
+    if(!isHorseLine(line,next)){i++;continue;}
+    const hm=line.match(/^(\d{1,2})(.+)$/);
+    const num=+hm[1]; const name=hm[2].trim();
+    i++;
+    // 騎手行: 「P値+騎手名 斤量kg 馬体重kg(増減kg)」
+    let jockey='',jockeyP=null,weightDiff=null;
+    if(i<n&&lines[i].includes('kg')){
+      const jm=lines[i].trim().match(/^(\d+)([^\d].+?)\s+([\d.]+)kg/);
+      if(jm){jockeyP=+jm[1];jockey=jm[2].trim();}
+      const wm=lines[i].match(/kg\(([+-]?\d+)kg\)/);
+      if(wm)weightDiff=+wm[1];
+      i++;
+    }
+    // 指数行: [人気](オッズ) S:.. A:.. SA:.. TSA:..  ※取消馬は人気・オッズ無しでS:から始まる
+    let odds=null,pop=null,saVal=null,tsaVal=null;
+    if(i<n&&(/\[\d+\]/.test(lines[i])||/\bS:\d+\s+A:\d+/.test(lines[i])||/SA:\d+/.test(lines[i]))){
+      const pm=lines[i].match(/\[(\d+)\]/); if(pm)pop=+pm[1];
+      const om=lines[i].match(/\(([\d.]+)\)/); if(om)odds=+om[1];
+      const sm=lines[i].match(/SA:(\d+)/); if(sm)saVal=+sm[1];
+      const tm=lines[i].match(/TSA:(\d+)/); if(tm)tsaVal=+tm[1];
+      i++;
+    }
+    // 前5走（タブ区切りのデータ行）
+    const runs=[];
+    while(i<n&&runs.length<5){
+      const l=lines[i];
+      // データ行は「数字 + タブ複数 + コース名 + 距離」を含む
+      if(!l||!/\t/.test(l)){ if(isHorseLine(l?l.trim():'',lines[i+1]?lines[i+1].trim():''))break; i++; continue; }
+      const cols=l.split('\t').map(c=>c.trim());
+      if(cols.length<10){i++;continue;}
+      // ラベル行（見出し）をスキップ：データ行はcols[0]が純粋な着順の整数。
+      // 「着順/3F/1c/馬重/距離/ｺｰｽ/RPCI」等の見出し語を含む行や、cols[0]が整数でない行は飛ばす。
+      if(!/^\d+$/.test(cols[0])){i++;continue;}
+      if(/着順|３Ｆ|3F|1c|2c|3c|4c|馬重|斥量|ｸｯｼｮﾝ|ｺｰｽ|ﾌﾞﾘ|ﾝｶ|RPCI|PCI|人気|S値|A値|SA値|グレード|ｸﾞﾚｰﾄﾞ/.test(l)){i++;continue;}
+      const chakujun=parseInt(cols[0],10);
+      const chakusa=parseFloat(cols[1]);     // 着差（勝ち馬との時間差）
+      const cstr=cols[3];
+      const agari=parseFloat(cols[4]);       // 上がり3F（生タイム）
+      const agariSa=parseFloat(cols[5]);     // 3F差（レース上がりとの差。小さい/マイナスほど相対的に速い末脚）
+      // 距離セル（「1000m」「ﾀﾞ1200m」など数字＋m）を探す。芝ダ接頭辞は無いことも多い。
+      // 列番号に頼ると中央のRPCI/PCI挿入でずれるため、距離セルの位置を起点に相対で取る。
+      let distIdx=-1,dist=raceDist,surface='芝';
+      for(let ci=0;ci<cols.length;ci++){
+        const dm=cols[ci].match(/^(ﾀﾞ|ダ|芝)?\s?(\d+)m$/);
+        if(dm){ distIdx=ci; dist=parseInt(dm[2],10); surface=(dm[1]==='ﾀﾞ'||dm[1]==='ダ')?'ダート':'芝'; break; }
+      }
+      // コースはその直前、馬場はその直後。馬体重はさらに後ろの3桁(360〜620)の数字セル。
+      const runVenue=distIdx>0?cols[distIdx-1]:'';
+      const track=distIdx>=0&&/^(良|稍重|重|不良)$/.test(cols[distIdx+1]||'')?cols[distIdx+1]:'';
+      let runWeight=null;
+      for(let ci=(distIdx>=0?distIdx+1:0);ci<cols.length;ci++){
+        const w=parseInt(cols[ci],10);
+        if(!isNaN(w)&&w>=360&&w<=620&&/^\d{3}$/.test(cols[ci])){ runWeight=w; break; }
+      }
+      // 各走のクラス（グレード）。距離セルの2つ後ろ（馬場の次）にある。例:GI/GII/GIII/L/オープン/3勝/2勝/1勝/未勝利/新馬
+      let grade='';
+      if(distIdx>=0){
+        for(let ci=distIdx+1;ci<Math.min(cols.length,distIdx+5);ci++){
+          if(/^(G[ⅠⅡⅢI]+|Jpn[ⅠⅡⅢI]+|L|リステッド|オープン|ＯＰ|OP|準オープン|[123１２３]勝|未勝利|新馬)$/.test(cols[ci])){grade=cols[ci];break;}
+        }
+      }
+      // 各走SA値：着順〜SA値の並びは中央・地方とも cols[9]（RPCI/PCIはSAより後ろ）
+      const runSA=parseFloat(cols[9]);
+      // RPCI=レース全体のペース指数、PCI=その馬のペース指数。50中央、大きいほどスロー/小さいほどハイ。
+      // 距離セルの直前2つがRPCI/PCI（中央データ）。地方はこの列が無いこともあるのでdistIdx基準で取る。
+      const rpci=distIdx>=2?parseFloat(cols[distIdx-3]):NaN;
+      const pci=distIdx>=2?parseFloat(cols[distIdx-2]):NaN;
+      if(isNaN(chakujun)){i++;continue;}
+      const runVn=detectVenueKind(runVenue||venueName);
+      // 直線競馬：新潟芝1000mは直線（コーナーなし）。通過順が空のものも直線扱い。
+      const isStraight=(runVenue&&runVenue.includes('新潟')&&surface==='芝'&&dist===1000)
+                      || !cstr || !/^\d+$/.test(cstr);
+      const nc=numCorners(dist,runVn,isStraight,runVenue||venueName,surface);
+      const corners=parseCorners(cstr,nc,18);
+      const firstC=corners.length?corners[0]:null;
+      const lastC=corners.length?corners[corners.length-1]:null;
+      runs.push({chakujun,
+        chakusa:isNaN(chakusa)?null:chakusa,      // 着差
+        diff3f:isNaN(chakusa)?null:chakusa,        // 後方互換（旧名diff3f＝着差）
+        agari:isNaN(agari)?null:agari,             // 上がり3F生タイム
+        f3:isNaN(agari)?null:agari,                // 後方互換（旧名f3＝上がり）
+        agariSa:isNaN(agariSa)?null:agariSa,       // 3F差（ペース補正後の末脚指標）
+        runWeight,                                 // その走の馬体重
+        grade,                                     // その走のクラス（グレード）
+        raceLabel:(cols[cols.length-1]||'').trim(), // その走のレース名（重賞辞書照合用）
+        rpci:isNaN(rpci)?null:rpci, pci:isNaN(pci)?null:pci,  // ペース指数
+        firstC,lastC,corners,dist,track,surface,runVenue,isStraight,runSA:isNaN(runSA)?null:runSA});
+      i++;
+      // 次が馬行なら終了
+      if(isHorseLine(lines[i]?lines[i].trim():'',lines[i+1]?lines[i+1].trim():''))break;
+    }
+    // 走数0でも馬として登録する（初出走・データなし馬を消さず、表示で明示する）
+    horses.push({num,name,jockey,jockeyP,weightDiff,odds,pop,saVal,tsaVal,runs,noData:runs.length===0});
+  }
+  // ── ウマークスのヘッダーSA/TSAは時々0や欠損になるが、各走の成績欄には実在のSA値がある。
+  //    ヘッダーを真に受けると能力のある馬を最下位扱いしてしまうため、欠損時は各走の実績値から
+  //    代表値（上位2走の平均＝その馬のベスト級の地力）を自前計算して補う。指数の見かけの0に騙されない。
+  horses.forEach(h=>{
+    const runSAs=h.runs.map(r=>r.runSA).filter(v=>v!=null&&v>0).sort((a,b)=>b-a);
+    if(runSAs.length && (h.saVal==null||h.saVal===0)){
+      // ヘッダーが無効(0/欠損)のときだけ、各走の実績値（上位2走平均＝ベスト級の地力）で補う。
+      // 有効なヘッダー値は尊重し、勝手に上書きしない（指数の出所をむやみに変えない）。
+      h.saVal=Math.round(runSAs.slice(0,2).reduce((a,b)=>a+b,0)/Math.min(2,runSAs.length));
+      h.saFromRuns=true;
+    }
+  });
+  return {raceDist,raceSurface,raceTrack,raceName,raceTitle,venueName,vn,raceClass,raceGradeText,horses};
+}
+
+// ============================================================
+// 脚質の検出（通過順位の推移から。最初だけでなく勝負所・捲りも見る）
+// ============================================================
+function nigeCount(h){return h.runs.filter(r=>r.firstC===1).length;}
+function frontCount(h){return h.runs.filter(r=>r.firstC!=null&&r.firstC<=4).length;}
+// 勝負所で前：最初or最終コーナーで4番手以内（捲り・好位差しも拾う）
+function contendCount(h){
+  return h.runs.filter(r=>{
+    const f=r.firstC,l=r.lastC; return (f!=null&&f<=4)||(l!=null&&l<=4);
+  }).length;
+}
+// 捲り：後方(5番手以降)から最終4番手以内へ3つ以上押し上げた走り
+function makuriCount(h){
+  return h.runs.filter(r=>{
+    const f=r.firstC,l=r.lastC; return f!=null&&l!=null&&f>=5&&l<=4&&(f-l)>=3;
+  }).length;
+}
+// 近5走の上がり最速値（小さいほど速い＝能力の最大値）
+function bestAgari(h){
+  const v=h.runs.map(r=>r.agari).filter(x=>x!=null&&!isNaN(x));
+  return v.length?Math.min(...v):99;
+}
+// 3F差ベースの末脚指標：レース上がりとの差が小さい/マイナスほど、ペースを補正しても
+// 相対的に速い末脚を使えた証拠。生タイムより能力を正確に表す。近走のベスト（最小）を返す。
+function bestAgariSa(h){
+  const v=h.runs.map(r=>r.agariSa).filter(x=>x!=null&&!isNaN(x));
+  return v.length?Math.min(...v):99;
+}
+// 脚質ラベル
+function legLabel(h){
+  let nige=0,sen=0,mak=0,sashi=0;
+  h.runs.forEach(r=>{
+    const f=r.firstC,l=r.lastC; if(f==null)return;
+    if(f===1)nige++;
+    else if(f<=4)sen++;
+    else if(l!=null&&l<=4&&(f-l)>=3)mak++;
+    else sashi++;
+  });
+  const mx=Math.max(nige,sen,mak,sashi);
+  if(mx===0)return'-';
+  if(nige===mx)return'逃';
+  if(sen===mx)return'先';
+  if(mak===mx)return'捲';
+  return'差';
+}
+
+// ============================================================
+// 展開予測：ハナを取れる馬の数でペースを見る（断定しない）
+// ============================================================
+function predictPace(horses,raceDist){
+  // ハナ主張候補：1走だけの逃げで拾わない。複数回逃げている、または近2走で先頭〜2番手など
+  // 明確に前へ行く意志のある馬に絞る（たまたま1度だけ逃げた差し馬を混ぜない）。
+  const escers=horses.filter(h=>{
+    const nige=nigeCount(h);
+    const recentFront=h.runs.slice(0,2).filter(r=>r.firstC!=null&&r.firstC<=2).length; // 近2走で2番手内
+    return nige>=2 || (nige>=1 && recentFront>=1);
+  });
+  const esc=escers.sort((a,b)=>nigeCount(b)-nigeCount(a));
+  const makuri=horses.filter(h=>makuriCount(h)>=2);
+  const band=distBand(raceDist);
+  const frontHorses=horses.filter(h=>frontCount(h)>=2).length;
+  const frontRatio=horses.length?frontHorses/horses.length:0;
+
+  // ── ペース予測は「逃げ馬の数」を主軸にする（調査に基づく）──
+  // 逃げ0〜1頭：ハナ争いがなく単騎で楽に行けてスロー寄り（前残り）。
+  // 逃げ2頭：ハナ争いが生じてミドル〜ハイ。
+  // 逃げ3頭以上：先頭争いが長引いてハイ。
+  // 距離で機械的にハイにはしない。距離は小さな微調整に留める。
+  let paceScore;
+  if(esc.length===0) paceScore=-1;       // 逃げ不在：押し出しの緩い流れ
+  else if(esc.length===1) paceScore=-1;  // 単騎逃げ：マイペースでスロー寄り
+  else if(esc.length===2) paceScore=1;   // 2頭のハナ争い
+  else if(esc.length===3) paceScore=2;   // 3頭で激化
+  else paceScore=3;                      // 4頭以上は明確なハイ
+
+  // 先行馬が多いと隊列形成で前半が締まる（軽い補正）
+  if(frontRatio>=0.55) paceScore+=1;
+  else if(frontRatio<=0.20) paceScore-=1;
+
+  // 距離の微調整：短距離はテンが速くなりやすく、長距離は緩みやすい（±1まで）
+  if(band==='sprint') paceScore+=1;
+  else if(band==='long') paceScore-=1;
+
+  let pace,cls;
+  if(paceScore>=3){pace='ハイ想定';cls='pace-high';}
+  else if(paceScore>=1){pace='ミドル〜ハイ想定';cls='pace-high';}
+  else if(paceScore===0){pace='ミドル想定';cls='pace-mid';}
+  else if(paceScore===-1){pace='スロー〜ミドル想定';cls='pace-slow';}
+  else {pace='スロー想定';cls='pace-slow';}
+
+  // 説明文（逃げ馬の数を主役に述べる。ただし展開は読み切れない＝参考と明示する）
+  let note;
+  if(esc.length===0) note=`明確な逃げ馬が不在。ハナ争いが起きず、先行力のある馬が押し出される形で前半は緩みやすい。`;
+  else if(esc.length===1) note=`ハナ主張は${esc[0].num}番が有力で単騎濃厚。競り合う相手がいないためマイペースに落とせる公算。`;
+  else note=`ハナを主張できる馬が${esc.length}頭（${esc.slice(0,4).map(h=>h.num+'番').join('・')}${esc.length>4?'等':''}）。${esc.length>=3?'先頭争いが長引けば前半が速くなる可能性':'2頭の先行争いで流れは締まりやすい'}。`;
+
+  return {esc,makuri,pace,cls,note,paceScore,frontRatio};
+}
+
+// ============================================================
+// 変化の検知：距離変化・馬体重変化・成績トレンド（同条件実績だけでなく変わり身を拾う）
+// ============================================================
+function detectChange(h,raceDist){
+  const out={distChange:0,distWord:'',weightWord:'',trendWord:'',score:0};
+  // ── 距離変化（前走比）──
+  let distMove=0; // -1短縮 / 0同 / +1延長
+  if(h.runs.length>0&&h.runs[0].dist){
+    const prev=h.runs[0].dist;
+    const diff=raceDist-prev;
+    out.distChange=diff;
+    if(diff<=-200){out.distWord='距離短縮';distMove=-1;out.score+=0.8;}    // 短縮は追走楽で有利
+    else if(diff<=-100){out.distWord='やや短縮';distMove=-1;out.score+=0.4;}
+    else if(diff>=200){out.distWord='距離延長';distMove=1;out.score-=0.8;}  // 延長は不利が出やすい
+    else if(diff>=100){out.distWord='やや延長';distMove=1;out.score-=0.4;}
+    else out.distWord='ほぼ同距離';
+  }
+  // ── 成績トレンド（着差の推移）──
+  // 上昇は「直近が明確に詰まっている馬だけ」厳しく判定。全馬に配らない。
+  const diffs=h.runs.map(r=>r.diff3f).filter(v=>v!=null);
+  let trend=0; // +上昇 / -不振
+  if(diffs.length>=3){
+    const recent=Math.min(diffs[0],diffs[1]);          // 直近2走のベスト着差
+    const older=Math.min(...diffs.slice(2));           // それ以前のベスト着差
+    // 直近で「明確に」接戦に近づいた（0.8秒以上詰めた）馬だけ上昇とみなす
+    if(diffs[0]<=older-0.8 || recent<=older-0.8){trend=1;out.trendWord='近走で着差を大きく詰めた上昇馬';out.score+=1.2;}
+    // 直近で大きく崩れた（1.0秒以上開いた）
+    else if(diffs[0]>=older+1.0){
+      trend=-1;
+      // 崩れても距離変化があればショックで一変の余地（穴）。距離が同じでも、崩れ＝条件不一致や
+      // 展開負けの可能性があり、着差だけで強く切らない。減点は軽めに留める。
+      if(distMove!==0){out.trendWord='前走不振も距離変化のショックで一変余地';out.score+=0.6;}
+      else {out.trendWord='近走は着差を離されており要注意';out.score-=0.3;}
+    }
+  }
+  // ── 馬体重変化（メリハリをつける）──
+  if(h.weightDiff!=null){
+    const w=h.weightDiff;
+    if(w>=-2&&w<=2){out.weightWord='馬体ほぼ維持';out.score+=0.2;}
+    else if(w>2&&w<=8){out.weightWord=`馬体+${w}kg`;out.score+=0.1;}
+    else if(w>8){out.weightWord=`馬体+${w}kg（大幅増・ダートは妙味）`;}        // 切らないが加点もしない
+    else if(w<-2&&w>=-8){out.weightWord=`馬体${w}kg（絞れた範囲）`;out.score+=0.1;}
+    else if(w<-8){out.weightWord=`馬体${w}kg（大幅減・状態に注意）`;out.score-=0.8;}  // 明確に減点
+  }
+  return out;
+}
+
+// ============================================================
+// 総合評価：能力を軸に、今回の距離×コース×展開で脚質補正（排他にしない）
+//           ＋距離・馬体重・成績の変化（変わり身）も加点減点する
+// ============================================================
+// 中身の評価：良い材料は加点、悪い材料は減点（上下両方向）。
+// 着順ではなく中身（着差・通過順・展開）で見る。なんちゃって好走は減点。
+// ここで出す ability は「今回どれだけ走れそうか」の絶対的な手がかり。
+// ============================================================
+function evaluate(horses,ctx){
+  const {raceDist,band,bias,escCount,track,escSet,escList,paceScore,raceClass}=ctx;
+  const fieldSize=horses.length;   // 出走頭数（事実）。脚質の有利不利の判定に使う。
+  // 末脚は生の上がりでなく「3F差」で見る（ペースを補正した相対的な末脚の優秀さ）。
+  const saMed=median(horses.filter(h=>!h.noData).map(h=>bestAgariSa(h)));
+  const agariMed=median(horses.filter(h=>!h.noData).map(h=>bestAgari(h)))||38;
+  horses.forEach(h=>{
+    if(h.noData||h.runs.length===0){
+      h.cc=0;h.mk=0;h.ba=99;h.basa=99;h.ng=0;h.bestDiff=9;h.sameDistGood=0;h.sameDistN=0;
+      h.isFront=false;h.isMakuri=false;h.isCloser=false;h.leg='?';
+      h.change={distWord:'',trendWord:'',weightWord:'',score:0};
+      h.posScore=0;h.abilScore=0;h.ability=-99;h.total=-99;h.reasons=['前走データなし（初出走等）で中身を評価できず保留'];
+      return;
+    }
+    const cc=contendCount(h), mk=makuriCount(h), ba=bestAgari(h), ng=nigeCount(h);
+    const basa=bestAgariSa(h);                    // 3F差ベースの末脚（小さいほど優秀）
+    const diffs=h.runs.map(r=>r.chakusa).filter(v=>v!=null);   // 着差
+    const bestDiff=diffs.length?Math.min(...diffs):9;
+    const sameDist=h.runs.filter(r=>r.dist===raceDist);
+    const sameDistGood=sameDist.filter(r=>r.chakusa!=null&&r.chakusa<=0.5).length;
+    const sameBand=h.runs.filter(r=>distBand(r.dist)===band);
+    const sameBandContend=sameBand.filter(r=>{const f=r.firstC,l=r.lastC;return(f!=null&&f<=4)||(l!=null&&l<=4);}).length;
+    const trackDiffs=h.runs.filter(r=>r.track===track).map(r=>r.chakusa).filter(v=>v!=null);
+    const trackBest=trackDiffs.length?Math.min(...trackDiffs):null;
+
+    // 脚質の分類（今回想定）。前に行ける馬と後方馬で上がりの扱いを変える。
+    const isFront=cc>=2;                         // 勝負所で前にいられる（先行・好位）
+    const isMakuri=mk>=1;                        // 後方から押し上げる捲り
+    const isEscaper=escSet&&escSet.has(h.num);   // 展開予測でハナ主張候補
+    // 後方脚質：勝負所で前に行けず、捲りでもない＝差し・追い込み
+    const isBackRunner=cc<2 && !isMakuri;
+    // 3F差は「後方馬が通用する末脚を持つか」の判定にのみ使う（前の馬は構造的に上がりが
+    // 遅くなるため上がりで評価しない）。レース上がりより明確に速い（3F差が小さい）なら通用。
+    const closerHasKick = isBackRunner && basa<=saMed;          // 差し馬で末脚通用
+    const closerNoKick  = isBackRunner && basa>saMed && basa!=99; // 後方なのに上がりも平凡＝力不足
+    const isCloser=closerHasKick;               // 「届く差し馬」だけをcloserとみなす
+
+    // 決め手リスト（理由とスコア寄与のペア）。後でタグ・印根拠に使う。
+    const factors=[];
+    const add=(score,label)=>{ if(score!==0)factors.push({score,label}); };
+
+    // ── 位置・脚質スコア ──
+    let pos=0;
+    // 脚質は「強さ」ではなく特性。前にいられることと後方から差せることは対等に扱う。
+    // 位置取りが安定している（脚質が確立している）ことを軽く評価する程度にとどめ、
+    // 先行馬を無条件に持ち上げて差し馬を沈めるバイアスは作らない。
+    // 先行・好位で運べる安定性（控えめ）
+    if(cc>0){ const v=Math.min(cc,3)*0.35; pos+=v; add(v,`勝負所で前の位置を取れる${cc}/${h.runs.length}回`); }
+    // 捲りで動ける機動力
+    if(mk>0){ const v=mk*0.4; pos+=v; add(v,`後方から押し上げる捲り${mk}回`); }
+    // 後方馬の安定性：差し馬が毎回後方から脚を使えているなら、先行の安定と同等に評価する。
+    if(isCloser&&cc===0){ pos+=0.6; add(0.6,'後方から脚を使う脚質が確立'); }
+    // 通用する末脚（レース上がりを上回る差し脚）は明確な武器として加点（先行の位置取りと対等）。
+    if(closerHasKick){ pos+=0.9; add(0.9,`後方からレース上がりを上回る末脚（3F差${basa}）`); }
+    // 後方で上がりが目立たないだけでは「力不足」と断じない（出遅れ・展開・舞台不一致の可能性）。
+
+    // 【脚質が今回の舞台で生きるかを、事実ベースで判定する】
+    // 展開（ハイ/スロー）は不確定な仮定なので、それを理由に全馬へ大きく加点しない。
+    // 動かせる事実＝この馬の脚質（過去の通過順）と、コースの構造（直線長・前残り傾向）、
+    // 頭数で、控えめに調整する。展開はあくまで参考で、印スコアの主役にはしない。
+    // ハナ主張馬：単騎濃厚なら前で運べる利は事実として小さく加点（決め打ちの大加点はしない）
+    if(isEscaper){
+      if(escCount===1){ pos+=0.8; add(0.8,'ハナを主張でき前で運べる（単騎濃厚）'); }
+      else if(escCount===2){ pos+=0.4; add(0.4,'前で運べるがハナ争いあり'); }
+      else { pos+=0.1; add(0.1,'先行争いは激化気味'); }
+    }
+    // コース構造（事実）による脚質の有利不利。前残り傾向の強いコースで前に行ける馬、
+    // 差しが届きやすいコースで末脚のある馬を、控えめに加点する。
+    if(bias==='強'){            // 直線短く前残り傾向のコース
+      if(isFront||isEscaper){ pos+=0.6; add(0.6,'前残り傾向のコースで先行力が生きる'); }
+      if(isCloser){ pos-=0.4; add(-0.4,'直線短く差しが届きにくいコース'); }
+    }else if(bias==='弱'){      // 直線長く差しも届きやすいコース
+      if(closerHasKick){ pos+=0.5; add(0.5,'直線長く優秀な末脚が生きるコース'); }
+    }
+    // 多頭数（事実）は先行馬が好位を取りにくく、紛れる。差し優秀馬にわずかに利。
+    if(fieldSize>=14){
+      if(isCloser&&closerHasKick){ pos+=0.3; add(0.3,'多頭数で差し脚が生きやすい'); }
+    }else if(fieldSize<=8){
+      if(isFront||isEscaper){ pos+=0.3; add(0.3,'少頭数で先行勢が止まりにくい'); }
+    }
+    if(band==='sprint'){
+      if(isFront||isEscaper){ pos+=0.5; add(0.5,'短距離で先行力が活きる'); }
+    }else if(band==='long'){
+      if(isMakuri){ pos+=0.5; add(0.5,'長距離で捲りが決まりやすい'); }
+      if(isCloser){ pos+=0.3; add(0.3,'長距離で差しが決まりやすい'); }
+    }
+
+    // ── 能力スコア（中身）。接戦実績は「どのクラスでの接戦か」で価値を変える ──
+    let abil=0;
+    // 各走を「中身」で採点する。着差は手がかりの一つに過ぎず、それだけに引っ張られない。
+    // 着順・着差が悪くても、強い相手に揉まれた・展開が向かず力を出せなかった・速い上がりを
+    // 使えた走は、能力の裏付けとして拾う。逆に恵まれただけの好走は割り引く。
+    // レース上がり中央値（その馬の各走の上がりを比較する基準）
+    const contentOf=(r)=>{
+      if(r.chakusa==null)return null;
+      // ① 基礎点：着差（小さいほど高い）。ただし上限を抑え、これ単独で跳ねないようにする。
+      const closeness=Math.max(0,2.4-r.chakusa*1.2);     // 最大2.4（旧3.0から圧縮）
+      // ② クラス補正：同じ着差でも上の格は価値が高い／格下は割引
+      const rc=classRank(r.grade,r.raceLabel);
+      let classMul=1.0;
+      if(raceClass>0&&rc>0){
+        const d=rc-raceClass;
+        if(d>=0)classMul=1.0+Math.min(0.6,d*0.2);
+        else classMul=Math.max(0.1,1.0+d*0.5);
+      }
+      // ③ ペース×位置取りの噛み合い：恵まれた好走を割引、打開した好走を加点
+      let paceMul=1.0, pNote='';
+      if(r.rpci!=null && r.firstC!=null){
+        const front=r.firstC<=4;
+        if(r.rpci<=47){ if(front){paceMul=1.25;pNote='ハイペースを前で粘った価値ある内容';}else{paceMul=0.9;pNote='ハイペースで差し有利だった面';} }
+        else if(r.rpci>=53){ if(front){paceMul=0.78;pNote='スローで前残りの恵まれた面';}else{paceMul=1.2;pNote='スローを後方から差した価値ある内容';} }
+      }
+      // ④ 着順以上の中身（ここが本題）。着差が悪くても以下があれば能力の裏付けとして加点。
+      let coreBonus=0; let coreNote='';
+      // 4a. その走で「レース上がりを上回る末脚」を使えた（展開が向かずとも脚は確か）
+      if(r.agariSa!=null && r.agariSa<0){ coreBonus+=0.5; coreNote='展開不向きでも上がり最速級の脚'; }
+      // 4b. 後方から差して届かなかった負け（前残りの流れを後方で進めて差を詰めた）
+      if(r.firstC!=null && r.firstC>=8 && r.rpci!=null && r.rpci>=51 && r.chakusa!=null && r.chakusa<=0.8){
+        coreBonus+=0.5; coreNote='前残り流れを後方から詰めた負けて強しの内容'; }
+      const score = closeness*classMul*paceMul + coreBonus;
+      return {score, pNote:coreNote||pNote, run:r};
+    };
+    // ベスト1走への依存を減らす：上位2走の内容を「ベスト + 2番手の半分」で見る（1走頼みを防ぐ）。
+    const contents=h.runs.map(contentOf).filter(x=>x&&x.score>0).sort((a,b)=>b.score-a.score);
+    let bestContent=0, bestContentRun=null, bestPaceNote='';
+    if(contents.length){
+      bestContent = contents[0].score + (contents[1]?contents[1].score*0.35:0);
+      bestContentRun = contents[0].run; bestPaceNote=contents[0].pNote;
+    }
+    if(bestContent>0){
+      abil+=bestContent;
+      const g=bestContentRun?classRank(bestContentRun.grade,bestContentRun.raceLabel):0;
+      const gtxt=bestContentRun&&bestContentRun.grade?`${bestContentRun.grade}で`:'';
+      const note=bestPaceNote?bestPaceNote:((raceClass>0&&g>0&&g<raceClass)?`格下(${bestContentRun.grade})での接戦のため割引`:`${gtxt}勝ち負けの接戦`);
+      const shownDiff=bestContentRun?bestContentRun.chakusa:bestDiff;
+      add(bestContent,`${note}（${shownDiff}秒差・相手の格と中身を加味）`);
+    }
+    // ── 穴の根拠（過小評価されているが走る根拠がある馬）──
+    // 穴は「前走の負けに理由がある＋今回条件が好転＋展開が脚質に向く」が複数揃う馬。
+    // 単独では弱いので、2つ以上該当して初めて加点する（穴だらけにしないため）。
+    let anaReasons=[];
+    // ① 前走は大敗だが、過去に今回と同じ距離帯で好走（条件が今回戻る＝巻き返し余地）
+    const prevBad = h.runs[0] && h.runs[0].chakusa!=null && h.runs[0].chakusa>=1.0;
+    const goodAtThisBand = sameBand.some(r=>r.chakusa!=null&&r.chakusa<=0.4);
+    if(prevBad && goodAtThisBand) anaReasons.push('前走大敗も今回の距離帯では好走実績あり（条件好転）');
+    // ② 前走と今回で距離が変わる（ショックで一変の余地）＋過去に変更後の距離で good
+    if(h.change && h.change.distChange!==0 && goodAtThisBand && prevBad) anaReasons.push('距離変化で巻き返す余地');
+    // ③ 脚質という事実が今回のコース構造に合う（前残りコースで先行/差し届くコースで末脚）
+    //    かつ前走人気を落としていそうな大敗。展開の決め打ちではなくコースの事実で見る。
+    const fitsCourse = (bias==='弱' && (isCloser||isMakuri)) || (bias==='強' && isFront);
+    if(fitsCourse && prevBad) anaReasons.push('前走は大敗だが今回のコースは脚質に合う');
+    // ④ 過去にレース上がりを上回る末脚を使えている差し馬（前走大敗でも能力の裏付け）
+    if(isBackRunner && basa<=saMed && prevBad) anaReasons.push('前走大敗も過去にレース上がりを上回る末脚');
+    if(anaReasons.length>=2){
+      const anaBonus=Math.min(1.5, anaReasons.length*0.6);   // 複数該当ほど加点（上限1.5）
+      abil+=anaBonus;
+      add(anaBonus, `穴の妙味：${anaReasons[0]}`);
+    }
+    // 今回クラスより明確に格上で善戦経験があれば、通用度として別途わずかに加点
+    if(raceClass>0){
+      const topRC=Math.max(0,...h.runs.map(r=>(r.chakusa!=null&&r.chakusa<=1.0)?classRank(r.grade,r.raceLabel):0));
+      if(topRC>raceClass){ abil+=0.5; add(0.5,`今回より格上(${['','未勝利','1勝','2勝','3勝','OP','L','G3','G2','G1'][topRC]||'重賞'})で善戦の実績`); }
+    }
+    // 同条件（同距離・同馬場）実績は「補助」に留める。重ねて優遇すると同条件経験馬ばかり
+    // 高くなり、距離変わりや上昇馬を取りこぼすため、合計の上限を設けて控えめに加点する。
+    let sameCondBonus=0;
+    if(sameBandContend>0) sameCondBonus+=sameBandContend*0.25;
+    if(trackBest!=null&&trackBest<=0.5) sameCondBonus+=0.4;
+    if(sameDistGood>0) sameCondBonus+=sameDistGood*0.3;
+    sameCondBonus=Math.min(sameCondBonus,1.0);   // 同条件系は最大+1.0までに制限
+    if(sameCondBonus>0){ abil+=sameCondBonus; add(sameCondBonus,`今回に近い条件での好走実績`); }
+    // 距離帯未経験は「不明」であって「劣る」ではないため減点しない。
+    // 距離の変わり身（短縮有利・延長不利・ショックで一変）はdetectChangeで別途評価する。
+    let nanchatte=0;
+    h.runs.forEach(r=>{ if(r.chakujun!=null&&r.chakujun<=3&&r.diff3f!=null&&r.diff3f>=1.0)nanchatte++; });
+    // なんちゃって好走（着順は良いが着差大＝展開の恩恵）は「加点しない」程度に留め、強く減点しない。
+    // 着差が続いて悪いだけで地力不足と断じるのは誤り（展開不一致・舞台不適合・出遅れ等の理由がある）。
+    // 過去の着順・着差だけで馬を切らない。崩れの良し悪しは展開予測との噛み合いで見る。
+
+    const chg=detectChange(h,raceDist);
+    if(chg.distWord&&chg.distWord!=='ほぼ同距離'&&chg.score!==0) add(chg.score, chg.distWord+(chg.score>0?'（有利）':'（不利）'));
+    if(chg.trendWord) add(chg.trendWord.includes('上昇')?0.6:(chg.trendWord.includes('一変')?0.5:-0.5), chg.trendWord);
+    if(chg.weightWord&&(chg.weightWord.includes('大幅減')||chg.weightWord.includes('維持'))) add(chg.weightWord.includes('大幅減')?-0.8:0.2, chg.weightWord);
+
+    h.cc=cc; h.mk=mk; h.ba=ba; h.basa=basa; h.closerHasKick=closerHasKick; h.isBackRunner=isBackRunner; h.ng=ng; h.bestDiff=bestDiff;
+    h.sameDistGood=sameDistGood; h.sameDistN=sameDist.length;
+    h.isFront=isFront; h.isMakuri=isMakuri; h.isCloser=isCloser;
+    h.leg=legLabel(h); h.change=chg; h.nanchatte=nanchatte;
+    h.posScore=pos; h.abilScore=abil;
+    h.factors=factors;
+    // 印は中身（位置取り・脚質と展開の噛み合い・距離コース適性・接戦の中身・変わり身、
+    // 悪材料は減点）だけで決める。オッズ・人気は印選定に使わない。
+    h.ability=pos+abil+chg.score;
+    h.total=h.ability;
+  });
+
+  // ============================================================
+  // 第2パス：メンバー内の相対評価。各馬の「隠れた武器」と「弱点」を人気と無関係に暴く。
+  // 4軸を複合：①前走の負けの中身 ②ペースと脚質の噛み合い ③条件の急変 ④数字と人気の歪み
+  // ============================================================
+  const live=horses.filter(h=>!h.noData);
+  if(live.length>0){
+    // --- 各馬の生指標を集める ---
+    live.forEach(h=>{
+      // 末脚：3F差ベスト（小さいほど良い）
+      h._kick=h.basa!=null&&h.basa!==99?h.basa:99;
+      // 先行力：勝負所で前にいた回数の率
+      h._front=h.runs.length?contendCount(h)/h.runs.length:0;
+      // 地力：SA値
+      h._sa=h.saVal!=null?h.saVal:0;
+      // 好走の中身：今のabilScore（ペース・クラス補正済みの好走内容）
+      h._content=h.abilScore;
+      // クラス経験：過去最高格
+      h._class=Math.max(0,...h.runs.map(r=>classRank(r.grade,r.raceLabel)));
+    });
+    // --- メンバー内順位（1位=最良）を付ける ---
+    const rankBy=(arr,key,asc)=>{
+      const sorted=[...arr].sort((a,b)=>asc?a[key]-b[key]:b[key]-a[key]);
+      sorted.forEach((h,i)=>{h['_r'+key]=i+1;});  // 1始まりの順位
+    };
+    rankBy(live,'_kick',true);    // 3F差は小さいほど良い
+    rankBy(live,'_front',false);  // 先行力は大きいほど良い
+    rankBy(live,'_sa',false);     // SAは大きいほど良い
+    rankBy(live,'_content',false);// 好走内容は大きいほど良い
+    rankBy(live,'_class',false);  // クラス経験は大きいほど良い
+    const N=live.length;
+    const top=(rank)=>rank<=Math.max(2,Math.ceil(N*0.25));   // 上位25%以内か
+    const bottom=(rank)=>rank>=N-Math.max(1,Math.floor(N*0.25))+1; // 下位25%か
+
+    live.forEach(h=>{
+      const weapons=[];  // 武器（強み）
+      const weaks=[];    // 弱点（不安）
+      let relScore=0;    // 相対評価による加減点
+
+      // 軸①：前走の負けの中身（着順でなく通過順・着差・3F差で読む）
+      const pr=h.runs[0];
+      if(pr){
+        const prBad=pr.chakusa!=null&&pr.chakusa>=0.8;
+        if(prBad){
+          // 出遅れ：前走の最初コーナーが後方なのに、過去は前に行けていた→出遅れ/不利の可能性
+          const usuallyFront=contendCount(h)>=2;
+          if(pr.firstC!=null&&pr.firstC>=8&&usuallyFront){weapons.push('前走は出遅れ/不利の可能性（本来は前に行ける）');relScore+=0.8;}
+          // 前走が今回と違うペースで殺された（前走スローで差し届かず等）
+          else if(pr.rpci!=null&&pr.rpci>=53&&h.isCloser){weapons.push('前走スローで差し届かず度外視できる');relScore+=0.7;}
+          else if(pr.rpci!=null&&pr.rpci<=47&&h.isFront){weapons.push('前走ハイで先行潰れ度外視できる');relScore+=0.7;}
+          else {weaks.push('前走は着差離されて力負けの可能性');relScore-=0.4;}
+        }
+      }
+
+      // 軸②：脚質という事実が、今回の舞台（コース構造・頭数）で生きるか。
+      // 展開（ハイ/スロー）の決め打ちで全差し馬に加点はしない。末脚・先行力の事実を、
+      // コースの直線長や前残り傾向と噛み合わせて、武器/弱点として言語化する。
+      if(bias==='弱'){            // 直線長く差しが届きやすいコース
+        if((h.isCloser||h.isMakuri)&&top(h._r_kick)){weapons.push(`直線長いコース×末脚メンバー上位(${h._r_kick}位)`);relScore+=0.6;}
+      }else if(bias==='強'){      // 直線短く前残り傾向
+        if(h.isFront||escSet&&escSet.has(h.num)){weapons.push('前残り傾向のコースで先行力が生きる');relScore+=0.6;}
+        if(h.isCloser&&!top(h._r_kick)){weaks.push('直線短く差しが届きにくいコース');relScore-=0.3;}
+      }
+
+      // 軸③：条件の急変（今回の距離・馬場が過去の好走条件と一致するか）
+      const goodSameTrack=h.runs.some(r=>r.track===track&&r.chakusa!=null&&r.chakusa<=0.4);
+      const goodSameDist=h.runs.some(r=>r.dist===raceDist&&r.chakusa!=null&&r.chakusa<=0.4);
+      if(goodSameDist&&goodSameTrack){weapons.push(`今回の${raceDist}m${track}で好走実績`);relScore+=0.5;}
+      else if(h.runs.length>0&&!h.runs.some(r=>distBand(r.dist)===band)){weaks.push('今回の距離帯は経験が薄く適性不明');relScore-=0.2;}
+
+      // 軸④：中身の相対的な強み（人気・オッズは一切見ない。馬の中身だけで序列する）。
+      // メンバー内で好走内容・地力・末脚が上位なら、それ自体が武器。人気がどうであれ評価する。
+      if(top(h._r_content)&&h._r_content<=Math.max(2,Math.ceil(N*0.2))){
+        weapons.push(`好走内容がこのメンバーで上位(${h._r_content}位)`);relScore+=0.6;
+      }
+      // SA値はペース・馬場で変動する指数なので、これを根拠に強く加点しない（指数党に戻らない）。
+      // 中身（好走内容）を主とし、SAは補助的に小さく扱う。
+      if(h._r_sa===1){ weapons.push('このメンバーで地力(SA)最上位'); relScore+=0.3; }
+
+      // 武器に「メンバー最速の末脚」「先行力最上位」など、相対的な強みを明示
+      if(h._r_kick===1&&h._kick!==99)weapons.unshift(`このメンバーで最速級の末脚(3F差${h._kick})`);
+      if(h._r_front===1&&h._front>0)weapons.unshift('このメンバーで先行力最上位');
+      if(h._r_class===1&&h._class>0&&N>3)weapons.unshift(`このメンバー最高のクラス経験(${['','未勝利','1勝','2勝','3勝','OP','L','G3','G2','G1'][h._class]})`);
+
+      // ── 整合チェック：明確な武器を持つ馬から、矛盾する弱点を取り除く ──
+      // 「前走は力負けの可能性」は、その馬に前走を度外視できる根拠（出遅れ・展開）や
+      // メンバー上位の能力（最速末脚・過小評価・先行力最上位）がある場合は矛盾するので外す。
+      const hasStrongWeapon = weapons.some(w=>/最速級の末脚|先行力最上位|最高のクラス経験|内容がこのメンバーで上位|地力\(SA\)最上位|度外視/.test(w));
+      if(hasStrongWeapon){
+        const before=weaks.length;
+        for(let wi=weaks.length-1;wi>=0;wi--){
+          if(/力負けの可能性/.test(weaks[wi])){ weaks.splice(wi,1); relScore+=0.4; }  // 減点も取り消す
+        }
+      }
+
+      // ── 能力上位なのに武器が言語化されていない馬に、地力の武器を補う ──
+      // abilityがメンバー上位なら「総合力が上位」という武器を持つはず。これを明示しないと
+      // 弱点だけが表示されて上位印に来る違和感が出る。SA・好走内容の相対順位から補う。
+      if(weapons.length===0){
+        if(top(h._r_content)) weapons.push(`好走内容がメンバー上位(${h._r_content}位)で総合力が高い`);
+        else if(top(h._r_sa)) weapons.push(`地力(SA)がメンバー上位(${h._r_sa}位)`);
+      }
+
+      h.weapons=weapons; h.weaks=weaks;
+      h.total = h.ability + relScore;   // 相対評価を反映
+      h.relScore=relScore;
+
+      // ── 軸の堅実さ（複勝圏に来る安定度）を測る。勝ち切る能力(total)とは別物。──
+      // 馬券の軸は「3着内を外さない馬」。近走で複勝圏を確保できているか、大崩れがないか、
+      // 着差を詰められているかを、今回クラスとの格差も加味して評価する。ムラのある馬は軸より紐。
+      let stab=0;
+      const rr=h.runs;
+      if(rr.length){
+        rr.forEach((r,i)=>{
+          const w=[1.0,0.8,0.6,0.45,0.3][i]||0.2;   // 近走ほど重い
+          const rcl=classRank(r.grade,r.raceLabel);
+          // 今回と同格以上での好走を堅実さとして評価（格下の好走は割引）
+          const clMul = (raceClass>0&&rcl>0)?(rcl>=raceClass?1.0:Math.max(0.3,1-(raceClass-rcl)*0.35)):1.0;
+          if(r.chakujun<=3) stab += w*1.0*clMul;             // 複勝圏は加点
+          else if(r.chakusa!=null&&r.chakusa<=0.3) stab += w*0.7*clMul; // 着外でも僅差なら堅実
+          else if(r.chakusa!=null&&r.chakusa>=1.5) stab -= w*0.6;       // 大崩れは減点（ムラ）
+        });
+      }
+      h.stability=stab;
+    });
+
+    // ── 中身とオッズのズレを検出する（オッズを序列に使うのではなく、相対的なズレを見る）──
+    // 中身（total）の順位と、市場のオッズ順位を比べる。中身は上位なのにオッズが割安＝市場が
+    // 見落としている過小評価（妙味）。中身は下位なのにオッズが過剰人気＝危険信号。
+    // これは「人気で軸を決める」のではなく、中身評価が主、ズレは軸の信頼度・妙味の補助に使う。
+    const liveH2=horses.filter(h=>!h.noData);
+    const byTotal=[...liveH2].sort((a,b)=>b.total-a.total);
+    const byOdds=[...liveH2].filter(h=>h.odds!=null&&h.odds>0).sort((a,b)=>a.odds-b.odds);
+    if(byOdds.length>=4){
+      const totalRank=new Map(byTotal.map((h,i)=>[h,i+1]));
+      const oddsRank=new Map(byOdds.map((h,i)=>[h,i+1]));
+      liveH2.forEach(h=>{
+        const tr=totalRank.get(h), or=oddsRank.get(h);
+        if(tr==null||or==null)return;
+        const gap=or-tr;   // プラス＝中身の方が市場評価より上（過小評価）／マイナス＝過剰人気
+        h.oddsGap=gap;
+        // 過小評価（中身上位なのにオッズで3つ以上人気を落としている）＝妙味。控えめに加点。
+        if(gap>=3 && tr<=Math.ceil(liveH2.length*0.5)){
+          h.weapons=h.weapons||[]; h.weapons.push(`中身は上位だが市場評価が低く割安（妙味）`);
+          h.total+=0.4; h.relScore=(h.relScore||0)+0.4;
+        }
+        // 過剰人気（中身は中位以下なのにオッズで上位人気）＝軸にすると危険。弱点として記録。
+        else if(gap<=-3 && tr>Math.ceil(liveH2.length*0.4)){
+          h.weaks=h.weaks||[]; h.weaks.push(`人気の割に中身が伴わず過剰人気の懸念`);
+          h.overbet=true;
+        }
+      });
+    }
+  }
+}
+
+// ============================================================
+// レースの性格を判定する（堅い / 標準 / 荒れ / 難解）。
+// 調査に基づく荒れ要因（多頭数・馬場悪化・中距離・ダート・新馬/未勝利/ハンデ）に、
+// このメンバーの能力拮抗度（評価点の上位の開き）を複合して、予想方針を決める。
+// これが「軸◎と紐の選び方」「買い方の提案」「直線の見どころ」の土台になる。
+// ============================================================
+function raceCharacter(horses, ctx){
+  const {raceDist, track, surface, raceClass, band, paceScore} = ctx;
+  const live=horses.filter(h=>!h.noData).sort((a,b)=>b.total-a.total);
+  const N=live.length;
+  if(N<2) return {type:'難解',score:0,reasons:['出走情報が少なく判断不能'],topGap:0};
+
+  const t=live.map(h=>h.total);
+  const gap12=t[0]-t[1];           // 1位と2位の差（◎の抜け具合）
+  const gap13=t[0]-t[2];           // 1位と3位の差
+  const gap1mid=t[0]-t[Math.min(N-1,Math.floor(N/2))]; // 1位と中位の差（全体の縦長さ）
+
+  // ── オッズ断層の分析（市場が示すレースの堅さ・荒れ。相対的に捉える）──
+  // オッズを人気順に並べ、隣との倍率差が大きい箇所＝断層。上位できれいに断層が切れていれば
+  // 「上位数頭で決まる堅いレース」、上位に断層がなく横一線なら「抜けがいない荒れ」。
+  // 断層の位置で、何番人気までが現実的な圏内かを読む。
+  let oddsWall=null, oddsNote='', oddsChaos=0;
+  const od=horses.filter(h=>h.odds!=null&&h.odds>0).sort((a,b)=>a.odds-b.odds);
+  if(od.length>=4){
+    // 1番人気の抜け具合（1番人気と2番人気の倍率差）
+    const topJump=od[1].odds/od[0].odds;
+    // 上位での最初の大きな断層位置（倍率1.8倍以上開く最初の箇所）を探す
+    let wallAt=null;
+    for(let i=1;i<Math.min(od.length,8);i++){
+      if(od[i].odds/od[i-1].odds>=1.8){ wallAt=i; break; } // i番目の前に壁（=上位i頭で一区切り）
+    }
+    if(topJump>=2.5){
+      // 1番人気が断然。市場は堅いと見ている。
+      oddsChaos-=1.2; oddsNote=`1番人気が抜けて断然（市場は堅いと見ている）`;
+      oddsWall=1;
+    }else if(wallAt!=null&&wallAt<=4){
+      // 上位数頭できれいに断層。その圏内で決まりやすい＝やや堅い。
+      oddsChaos-=0.6; oddsNote=`上位${wallAt}頭でオッズに断層があり、圏内で決まりやすい`;
+      oddsWall=wallAt;
+    }else if(wallAt==null){
+      // 上位に明確な断層がない＝人気が割れて横一線＝荒れやすい。
+      oddsChaos+=1.0; oddsNote='オッズに明確な断層がなく人気が割れている（横一線で荒れ含み）';
+    }
+  }
+
+  // 荒れ度スコア（大きいほど荒れる）。各要因を加点。
+  let chaos=oddsChaos; const reasons=[];
+  if(oddsNote)reasons.push(oddsNote);
+  // ① 頭数（多いほど荒れる：10頭以上で+、16頭超でさらに+。少頭数は堅い側）
+  if(N>=16){chaos+=2;reasons.push(`${N}頭の多頭数で紛れが大きい`);}
+  else if(N>=13){chaos+=1.2;reasons.push(`${N}頭とやや多頭数`);}
+  else if(N>=10){chaos+=0.6;}
+  else if(N<=7){chaos-=1.2;reasons.push(`${N}頭の少頭数で能力上位が崩れにくい`);}
+  // ② 馬場（悪化で荒れる）
+  if(track==='不良'){chaos+=1.5;reasons.push('不良馬場で実力が出にくい');}
+  else if(track==='重'){chaos+=1.0;reasons.push('重馬場で波乱含み');}
+  else if(track==='稍重'){chaos+=0.5;reasons.push('稍重で多少の紛れ');}
+  // ③ 距離・コース（中距離は展開次第で荒れやすい、ダートは情報薄で荒れ気味、短距離は紛れやすい）
+  if(surface==='ダート'){chaos+=0.5;reasons.push('ダートは展開・砂被りで紛れやすい');}
+  if(band==='mid'){chaos+=0.5;reasons.push('中距離は展開で着順が動きやすい');}
+  if(band==='sprint'){chaos+=0.3;}
+  // ④ クラス（新馬・未勝利は能力比較が難しく荒れやすい。重賞は実力が出やすく堅い側）
+  if(raceClass===1){chaos+=0.8;reasons.push('未勝利/新馬は能力比較が難しい');}
+  else if(raceClass>=7){chaos-=0.6;reasons.push('重賞で実力が反映されやすい');}
+  // ⑤ ハイペース（前崩れで差し・追い込みが台頭しやすい→紛れる）
+  if(paceScore>=3){chaos+=0.6;reasons.push('ハイペースで前崩れの紛れ');}
+  else if(paceScore<=-1){chaos-=0.3;}
+
+  // ⑥ 能力拮抗度（このメンバーの中身）。点差が小さいほど荒れ・難解。
+  //    ◎が抜けているか（gap12大）と、上位が団子か（gap13小）を見る。
+  let ableHint='';
+  if(gap12>=1.2){ chaos-=1.0; ableHint='抜けた中心馬がいる'; reasons.push('評価最上位が他馬を明確に上回る'); }
+  else if(gap12<=0.4){ chaos+=1.0; ableHint='中心馬が抜けず混戦'; reasons.push('上位が僅差で中心が定まらない'); }
+  if(gap13<=0.8){ chaos+=0.8; if(!ableHint)ableHint='上位団子'; reasons.push('上位数頭が団子で差がない'); }
+
+  // 判定
+  let type;
+  const abilWide = gap1mid>=3.0;   // 上位と中位が大きく開く＝上位で決まりやすい
+  if(chaos<=-1.0 || (gap12>=1.5 && abilWide)) type='堅い';
+  else if(chaos>=2.5) type='荒れ';
+  else if(gap12<=0.4 && gap13<=0.8) type='難解';
+  else type='標準';
+
+  return {type, score:chaos, reasons, topGap:gap12, gap13, gap1mid, N, ableHint, oddsWall};
+}
+function detectAnomaly(horses,marked){
+  const saSorted=[...horses].filter(h=>h.saVal!=null).sort((a,b)=>b.saVal-a.saVal);
+  horses.forEach(h=>{
+    h.anomaly=false;
+    if(h.odds==null||marked.includes(h))return;
+    const saRank=saSorted.findIndex(x=>x.num===h.num)+1;
+    const marketBacked=h.odds<=10;                  // 想定勝率8%以上の支持
+    const weakVisible=h.cc<2 && saRank>3 && !h.isFront && !h.isCloser;
+    if(marketBacked&&weakVisible){h.anomaly=true;h._saRank=saRank;}
+  });
+}
+
+// ============================================================
+// 表示
+// ============================================================
+const MARKS=[{m:'◎',c:'m0'},{m:'○',c:'m1'},{m:'▲',c:'m2'},{m:'△',c:'m3'},{m:'☆',c:'m4'}];
+const LABELS=['前走','2走前','3走前','4走前','5走前'];
+function wakuOf(num,field){
+  if(field<=8)return num;
+  // 9頭以上は8枠に均等割り（簡易）
+  return Math.min(8,Math.ceil(num/Math.ceil(field/8)));
+}
+
+function run(){
+  const text=document.getElementById('inp').value;
+  if(!text.trim()){document.getElementById('out').innerHTML='<p style="color:#888">テキストを貼って予想を押してください</p>';return;}
+  const p=parseUmarks(text);
+  const ri=document.getElementById('ri');
+  if(!p.horses.length){ri.innerHTML='';document.getElementById('out').innerHTML='<p style="color:#e66">データを読み取れませんでした。前5走テキストを確認してください。</p>';return;}
+
+  const band=distBand(p.raceDist);
+  const bias=frontBias(p.venueName,p.raceDist);
+  const pace=predictPace(p.horses,p.raceDist);
+  const ctx={raceDist:p.raceDist,band,bias,escCount:pace.esc.length,track:p.raceTrack,surface:p.raceSurface,
+    paceScore:pace.paceScore,raceClass:p.raceClass,
+    escSet:new Set(pace.esc.map(h=>h.num)), escList:pace.esc, makuriSet:new Set(pace.makuri.map(h=>h.num))};
+  evaluate(p.horses,ctx);
+
+  const field=p.horses.length;
+  const markLimit=Math.min(5,field);
+  const ranked=[...p.horses].sort((a,b)=>b.total-a.total);
+  const character=raceCharacter(p.horses,ctx);   // レースの性格（堅い/標準/荒れ/難解）
+
+  // ============================================================
+  // 軸と紐は別の考え方で選ぶ（プロの補完関係）。人気・オッズは一切使わない。
+  //   軸◎：このメンバー・今回条件で能力を発揮でき、かつ3着内を外しにくい馬（中身＋堅実さ）。
+  //   紐 ：軸が来る前提で残り2〜3着に絡む相手。軸が堅実に立つレースは中身のある一発を広く拾い、
+  //        軸が拮抗・手薄なレースは堅実な馬で固めて的中を確保。さらに軸と違う脚質を1頭混ぜて
+  //        展開の保険をかける（軸が前なら差し、軸が差しなら前を最低1頭）。
+  // ============================================================
+  const live=ranked.filter(h=>!h.noData);
+  let marked=[];
+  let axisInfo=null;
+  if(live.length){
+    // --- 軸◎の選定：能力(total)上位の中から、堅実さ(stability)も加味して1頭 ---
+    // 上位が拮抗（total僅差）なら、より崩れにくい馬を軸に。点差が開けば能力を信頼。
+    const axisCands=live.slice(0,Math.min(4,live.length));
+    let axis=axisCands[0];
+    axisCands.forEach(h=>{
+      if(h===axis)return;
+      const closeAbil=(axis.total-h.total)<=0.8;          // 能力が拮抗している範囲
+      const moreStable=(h.stability||0)>(axis.stability||0)+0.5;
+      if(closeAbil&&moreStable) axis=h;                   // 拮抗なら堅実な方を軸に
+    });
+    // 軸が「堅実に立つ」か「拮抗・手薄」かを判定（紐の広げ方を変えるため）
+    const axisSolid = (axis.stability||0)>=1.0 && (character.type==='堅い'||character.type==='標準');
+
+    // --- 紐の候補（軸以外）を、中身で評価。軸の堅さで広げ方を変える ---
+    const others=live.filter(h=>h!==axis);
+    const himoScored=others.map(h=>{
+      let key=h.total;
+      const oneWeapon=(h.weapons||[]).some(w=>/最速級の末脚|先行力最上位|最高のクラス経験|度外視|今回の.*で好走実績|内容がこのメンバーで上位|穴の妙味/.test(w));
+      if(axisSolid){
+        // 軸が堅い→紐は配当を取りに、中身の一発（武器が立つ馬）を広めに拾う。堅実さは軽視。
+        if(oneWeapon) key+=0.8;
+      }else{
+        // 軸が拮抗・手薄→紐は的中確保。堅実さ(stability)を重視して手堅く受ける。
+        key+=(h.stability||0)*0.5;
+      }
+      return {h,key};
+    }).sort((a,b)=>b.key-a.key);
+    let himo=himoScored.map(x=>x.h);
+
+    // --- 脚質の保険：軸と逆の脚質を最低1頭は紐に含める（展開がどちらに転んでも拾う）---
+    // 軸が前に行く馬か後ろから来る馬かを、脚質フラグと実際の位置取り(cc)で判定する。
+    const isFrontType=(h)=> h.isFront || (pace.esc&&pace.esc.some(e=>e.num===h.num)) || ((h.cc||0)>=Math.ceil((h.runs.length||1)*0.6));
+    const axisFront = isFrontType(axis);
+    const wantLeg = axisFront ? (h=>!isFrontType(h)) : (h=>isFrontType(h));
+    const slots=markLimit-1;                              // 紐の枠数
+    let pick=himo.slice(0,slots);
+    if(!pick.some(wantLeg)){
+      const opp=himo.find(h=>wantLeg(h)&&!pick.includes(h));
+      if(opp) pick[slots-1]=opp;                          // 最下位の紐を逆脚質と入れ替え
+    }
+    marked=[axis,...pick];
+    // 講評で使うため、選定の根拠を保存する（表示と印ロジックを完全に連動させる）
+    axisInfo={axis, axisSolid, axisFront,
+      // 逆脚質保険で入れた馬（軸と逆の脚質で紐に含めた馬）
+      legHedge: pick.find(h=> wantLeg(h)) || null,
+      himoSolid: !axisSolid   // 軸が手薄→紐は堅実重視で固めた
+    };
+  }
+  marked.forEach((h,idx)=>{h.markObj=MARKS[idx];h.rank=idx;});
+  detectAnomaly(p.horses,marked);
+
+  // レース情報
+  ri.innerHTML=`<div class="rinfo">
+    <span class="rv">${p.venueName}</span><span class="rv">${p.raceName}</span>
+    ${p.raceTitle?`<span class="rv">${p.raceTitle}</span>`:''}
+    <span class="rv">${p.raceDist}m</span><span class="rv">${p.raceSurface}</span>
+    <span class="rv">${p.raceTrack}</span><span style="color:#888">${field}頭</span></div>`;
+
+  let html='';
+
+  // ── 展開予測：コース（事実）× 今日のメンバーの脚質構成（事実）でこのレースを読む ──
+  const straight=COURSE_STRAIGHT[p.venueName]||null;
+  const bandLabel={sprint:'短距離',mile:'マイル〜中距離',mid:'中距離',long:'長距離'}[band];
+  const liveH=p.horses.filter(h=>!h.noData);
+  const escN0=pace.esc.length;                                   // 逃げ（ハナ主張）馬の数
+  const frontN0=liveH.filter(h=>h.isFront||(pace.esc&&pace.esc.some(e=>e.num===h.num))).length; // 前に行ける馬
+  const closeN0=liveH.filter(h=>h.isCloser||h.isMakuri).length;  // 差し・捲り馬
+  // コースの地の利（直線長から来る傾向。傾向であって断定はしない）を、今日のメンバー構成が
+  // 増幅/打ち消すかで読む。専門データの手順「コース傾向×出走馬の脚質構成」に沿う。
+  const courseWord = straight?`直線約${straight}m。`:'';
+  let raceRead;
+  if(bias==='強'){            // 直線が短めで前が残りやすい傾向
+    if(escN0>=3) raceRead=`${courseWord}直線が短く前が残りやすい傾向のコースだが、今日はハナを主張する馬が${escN0}頭ひしめき、前は潰し合いになりやすい。差せる脚を持つ馬に出番が出てくる。`;
+    else if(escN0<=1) raceRead=`${courseWord}直線が短く前が残りやすい傾向。今日は前に行く馬も少なく、${escN0===1?'ハナの'+pace.esc[0].num+'番が単騎で楽に運べる形で、':''}前を取れる組がそのまま残しやすい。`;
+    else raceRead=`${courseWord}直線が短く前が残りやすい傾向。前を取れる${frontN0}頭の先行勢が地の利を得やすい。`;
+  }else if(bias==='弱'){      // 直線が長めで差しが届きやすい傾向
+    if(escN0<=1) raceRead=`${courseWord}直線が長く差しが届きやすい傾向のコースだが、今日は前に行く馬が${escN0}頭と手薄。${escN0===1?pace.esc[0].num+'番が単騎で楽に運べ、':''}前が残る目も出てくる。先行勢を侮れない。`;
+    else if(escN0>=3) raceRead=`${courseWord}直線が長く差しが届きやすい傾向。今日は前に${escN0}頭が集中し、前は速くなって苦しく、差せる${closeN0}頭に出番が来やすい。`;
+    else raceRead=`${courseWord}直線が長く差しが届きやすい傾向。前の${frontN0}頭が流れを作り、後ろの差し勢が直線で台頭しやすい。`;
+  }else{                      // どちらとも言い切れないコース
+    if(escN0>=3) raceRead=`${courseWord}今日は前に${escN0}頭が集中し前が忙しくなる。差せる馬に分がある。`;
+    else if(escN0<=1) raceRead=`${courseWord}今日は前に行く馬が少なく、${escN0===1?pace.esc[0].num+'番中心に':''}前で運ぶ組が残しやすい。`;
+    else raceRead=`${courseWord}前${frontN0}頭・差し${closeN0}頭の構成で、前後どちらにも決まり得る。脚質より地力上位が中心か。`;
+  }
+  html+=`<div class="sec">展開予測</div>
+    <div class="pace-box">
+      <div class="pace-val ${pace.cls}">${pace.pace}</div>
+      <div class="pace-note" style="color:#8c8">${p.venueName}${p.raceDist}m（${bandLabel}）：${raceRead}</div>
+      <div class="pace-note" style="margin-top:6px">${pace.note}</div>
+      ${pace.esc.length?`<div class="pace-note">ハナ主張候補：${pace.esc.map(h=>h.num+'番 '+h.name).join('　')}</div>`:''}
+      ${pace.makuri.length?`<div class="pace-note" style="color:#cc5">捲り脚を持つ：${pace.makuri.map(h=>h.num+'番').join('・')}（道中で動く可能性）</div>`:''}
+    </div>`;
+
+  // ── 予想講評（実際に選んだ軸◎・紐と、その選定根拠に完全連動させる）──
+  if(marked.length && axisInfo){
+    const axis=marked[0];                       // 実際の軸◎（liveRanked[0]ではない）
+    const himos=marked.slice(1);                // 実際の紐
+    const cmap={'堅い':'#5c9','標準':'#9c5','荒れ':'#e94','難解':'#c77'};
+    const ccol=cmap[character.type]||'#9c5';
+    const escName=(h)=> h?`${h.num}番 ${h.name}`:'';
+    const axisStable=(axis.stability||0)>=1.0;  // 軸が堅実に立っているか（事実）
+    const axisLegWord = axisInfo.axisFront ? '前で運べる' : '差してくる';
+    let axisLine, himoLine, betLine;
+
+    // 軸◎の説明：なぜこの馬を軸にしたかを、選定根拠（堅実さ・脚質）で言い切る。人気は言わない。
+    const axisReason=(axis.weapons||[])[0]||'中身でメンバー上位';
+    if(axisStable){
+      axisLine=`軸◎は ${escName(axis)}。${axisReason}。近走で大きく崩れず複勝圏を確保できており、${axisLegWord}この馬を軸に据える。`;
+    }else{
+      axisLine=`軸◎は ${escName(axis)}。${axisReason}。能力で上位だが近走に崩れもあり、頭固定より複勝圏での信頼。`;
+    }
+
+    // 紐の説明：軸の堅さで広げ方が変わる理由と、逆脚質の保険をそのまま述べる。人気は言わない。
+    const himoNames=himos.map(escName).join('、');
+    const hedge=axisInfo.legHedge;
+    const hedgeWord = hedge ? `軸と逆脚質の ${escName(hedge)} を保険に入れ、展開がどちらに転んでも拾えるようにした。` : '';
+    if(axisInfo.axisSolid){
+      himoLine=`軸が堅実に立つので、紐 ${himoNames} は中身に裏付けのある一発まで広げて配当を狙う。${hedgeWord}`;
+    }else{
+      himoLine=`軸が抜けていないので、紐 ${himoNames} は崩れにくい馬で手堅く受ける。${hedgeWord}`;
+    }
+
+    // 買い方：レースの性格に応じて、的中重視か配当重視か見送りかを言い切る。
+    if(character.type==='堅い'){
+      betLine=`堅い一戦。点数を絞り、◎から${himos.slice(0,3).map(h=>h.num+'番').join('・')}への馬連・馬単で厚く狙う形。`;
+    }else if(character.type==='荒れ'){
+      betLine=`紛れる一戦。資金は抑えめに、◎から紐へワイド・3連複で手広く。配当を取りにいく組み立て。`;
+    }else if(character.type==='難解'){
+      betLine=`難解で中心が定まらず、強くは勧めにくい。買うなら少額で、◎○の馬連か上位のワイドBOXに留めたい。見送りも一手。`;
+    }else{
+      betLine=`◎から紐への馬連・3連複が基本。${axisInfo.axisSolid?'紐の一発が絡めば配当が伸びる。':'手堅く複勝圏を狙う。'}`;
+    }
+
+    // 直線の見どころ：軸◎が前で粘るのか差すのか＋逆脚質の保険馬がどう来るか、両方を名指し。
+    const escLead=pace.esc.length?pace.esc.slice(0,2).map(h=>h.num+'番').join('・'):(axisInfo.axisFront?escName(axis):'先行勢');
+    let scene;
+    if(axisInfo.axisFront){
+      // 軸が前で行く馬：軸の粘りを主役に、逆脚質（差し）保険がどう突っ込むか
+      scene=`${escLead}が引っ張る流れ。軸◎${axis.num}番が前で粘り込めるかが鍵で、${hedge?`差せる ${escName(hedge)} が後ろから突っ込んでくる`:'差し勢の追い込みが届くか'}。`;
+    }else{
+      // 軸が差す馬：前で運ぶ保険馬と、軸の差し脚
+      scene=`${escLead}が引っ張る流れ。${hedge?`前で運ぶ ${escName(hedge)} が粘り、`:''}軸◎${axis.num}番の差し脚がどこまで届くか。`;
+    }
+
+    html+=`<div class="sec">予想講評</div>
+      <div class="pace-box" style="border-left:4px solid ${ccol}">
+        <div style="font-size:1.05rem;font-weight:bold;color:${ccol};margin-bottom:6px">このレースは「${character.type}」</div>
+        <div class="pace-note" style="color:#bbb">${character.reasons.slice(0,3).join('／')}</div>
+        <div class="pace-note" style="margin-top:8px;color:#e8e8e8">${axisLine}</div>
+        <div class="pace-note" style="color:#e8e8e8">${himoLine}</div>
+        <div class="pace-note" style="margin-top:8px;color:#dca">${betLine}</div>
+        <div class="pace-note" style="margin-top:8px;color:#9bd">直線の見どころ：${scene}</div>
+      </div>`;
+  }
+
+  // ── 予想印 ──
+  html+=`<div class="sec">予想印（◎一頭軸）</div>`;
+  // 異常検知を最上部に
+  p.horses.filter(h=>h.anomaly).forEach(h=>{
+    html+=`<div class="sum-row" style="border-color:#ffcc00">
+      <div class="sum-top">
+        <span class="s-mark" style="color:#ffcc00;font-size:1.5rem">👹</span>
+        <span class="waku w${wakuOf(h.num,field)}">${h.num}</span>
+        <span class="s-name">${h.name}</span>
+        <span class="s-jockey">${h.jockey||''}</span>
+        ${h.odds!=null?`<span class="s-odds">${h.odds}倍</span>`:''}
+        ${h.pop!=null?`<span class="s-pop">${h.pop}人気</span>`:''}
+      </div>
+      <div class="s-tags"><span class="tag" style="background:#3a3000;color:#fc0">異常検知：単勝${h.odds}倍と市場の支持が厚いのに、勝負所で前${h.cc}/${h.runs.length}回・指標は地味。データに出ない好材料を市場が拾っている可能性。</span></div>
+    </div>`;
+  });
+  // 印馬カード
+  // 印カード（ハナ主張馬の連動表示用にescの集合を用意）
+  const ctxEsc=new Set(pace.esc.map(h=>h.num));
+  const escN=pace.esc.length;
+  marked.forEach(h=>{
+    // データなし馬は保留として明示
+    if(h.noData){
+      html+=`<div class="sum-row" style="opacity:0.7">
+        <div class="sum-top">
+          <span class="s-mark ${h.markObj.c}">${h.markObj.m}</span>
+          <span class="waku w${wakuOf(h.num,field)}">${h.num}</span>
+          <span class="s-name">${h.name}</span>
+          <span class="s-jockey">${h.jockey||''}</span>
+          ${h.odds!=null?`<span class="s-odds">${h.odds}倍</span>`:''}
+          ${h.pop!=null?`<span class="s-pop">${h.pop}人気</span>`:''}
+        </div>
+        <div class="s-tags"><span class="tag" style="background:#333;color:#bbb">前走データなし（初出走等）。中身を評価できないため保留。</span></div>
+      </div>`;
+      return;
+    }
+    const tags=[];
+    // この馬の脚質（今回の想定位置）を1つだけ
+    let posWord;
+    if(h.ng>=1&&h.cc>=3)posWord='今回も前〜先頭を狙える';
+    else if(h.cc>=3)posWord='先行〜好位';
+    else if(h.cc>=2)posWord='中団より前';
+    else if(h.isMakuri)posWord='後方から押し上げる捲り';
+    else if(h.isCloser)posWord='後方から差す末脚型';
+    else posWord='展開次第の中団';
+    tags.push(`<span class="tag tag-pos">${posWord}</span>`);
+
+    // 武器（緑・＋）と弱点（赤・−）をメンバー相対評価から表示。各馬で中身が変わる。
+    const weapons=h.weapons||[];
+    const weaks=h.weaks||[];
+    weapons.slice(0,3).forEach(w=>{
+      tags.push(`<span class="tag tag-fit">＋ ${w}</span>`);
+    });
+    weaks.slice(0,2).forEach(w=>{
+      tags.push(`<span class="tag" style="background:#3a1a1a;color:#f99">− ${w}</span>`);
+    });
+    if(weapons.length===0&&weaks.length===0){
+      tags.push(`<span class="tag" style="background:#2a2a2a;color:#aaa">目立つ武器・弱点は乏しく中位評価</span>`);
+    }
+
+    // 印の根拠を1行で（最大の武器、弱点があれば併記）
+    let reason='';
+    if(weapons.length){ reason=`${h.markObj.m}の根拠：${weapons[0]}`; if(weaks.length)reason+=`／ただし${weaks[0]}`; }
+    else if(weaks.length){ reason=`${h.markObj.m}：${weaks[0]}`; }
+
+    const runsHtml=h.runs.map((r,idx)=>{
+      const pos=r.firstC!=null?r.firstC+'番手':(r.isStraight?'直線':'-');
+      const cls=r.firstC!=null&&r.firstC<=4?'run-front':(r.firstC!=null&&r.firstC<=8?'run-mid':'run-back');
+      return `<span class="${cls}">${LABELS[idx]}:${pos}/${r.chakujun}着(${r.diff3f!=null?r.diff3f+'秒':'-'})</span>`;
+    }).join('');
+    html+=`<div class="sum-row">
+      <div class="sum-top">
+        <span class="s-mark ${h.markObj.c}">${h.markObj.m}</span>
+        <span class="waku w${wakuOf(h.num,field)}">${h.num}</span>
+        <span class="s-name">${h.name}</span>
+        <span class="s-jockey">${h.jockey||''}</span>
+        ${h.odds!=null?`<span class="s-odds">${h.odds}倍</span>`:''}
+        ${h.pop!=null?`<span class="s-pop">${h.pop}人気</span>`:''}
+      </div>
+      ${reason?`<div style="font-size:0.8rem;color:#ddd;margin-top:5px">${reason}</div>`:''}
+      <div class="s-tags">${tags.join('')}</div>
+      <div class="runs">${runsHtml}</div>
+    </div>`;
+  });
+
+  // ── 全馬テーブル ──
+  const saSorted=[...p.horses].filter(h=>h.saVal!=null).sort((a,b)=>b.saVal-a.saVal);
+  const tsaSorted=[...p.horses].filter(h=>h.tsaVal!=null).sort((a,b)=>b.tsaVal-a.tsaVal);
+  const saRank=h=>saSorted.findIndex(x=>x.num===h.num)+1;
+  const tsaRank=h=>tsaSorted.findIndex(x=>x.num===h.num)+1;
+  // 総合点の評価順位
+  const totalSorted=[...p.horses].sort((a,b)=>b.total-a.total);
+  const evalRank=h=>totalSorted.findIndex(x=>x.num===h.num)+1;
+  const byNum=[...p.horses].sort((a,b)=>a.num-b.num);
+  let rows='';
+  byNum.forEach(h=>{
+    const mk=h.markObj?h.markObj.m:(h.anomaly?'👹':'');
+    const mkColor=h.markObj?['#ff4444','#4488ff','#44cc44','#f0c040','#cc88ff'][h.rank]:'#ffcc00';
+    const sr=saRank(h), tr=tsaRank(h), er=evalRank(h);
+    // 近走着順の推移（新→古）を色付きで
+    const chakuStr=h.runs.map(r=>{
+      const c=r.chakujun;
+      const col=c<=3?'#5c5':(c<=6?'#cc8':'#888');
+      return `<span style="color:${col}">${c}</span>`;
+    }).join('-');
+    // 距離変化
+    const dch=h.change?h.change.distChange:0;
+    const dchStr=dch<=-100?`<span style="color:#7cc">短${Math.abs(dch)}</span>`:(dch>=100?`<span style="color:#e88">延${dch}</span>`:'<span style="color:#777">同</span>');
+    // 馬体変化
+    const wd=h.weightDiff;
+    const wdStr=wd==null?'-':(wd<=-9?`<span style="color:#e66">${wd}</span>`:(Math.abs(wd)<=2?`<span style="color:#5c5">${wd>=0?'+':''}${wd}</span>`:`<span style="color:#bbb">${wd>=0?'+':''}${wd}</span>`));
+    // 脚質色
+    const legCol={'逃':'#e66','先':'#ec0','捲':'#6c6','差':'#6bd','-':'#888'}[h.leg]||'#888';
+    rows+=`<tr>
+      <td><span class="waku w${wakuOf(h.num,field)}">${h.num}</span></td>
+      <td style="color:${mkColor};font-weight:bold;font-size:1.05rem">${mk||''}</td>
+      <td style="color:#888">${er}</td>
+      <td class="tdn">${h.name}</td>
+      <td style="color:${legCol};font-weight:bold">${h.leg}</td>
+      <td class="tdj">${h.jockey||'-'}<span style="color:#888"> P${h.jockeyP!=null?h.jockeyP:'-'}</span></td>
+      <td style="color:#f0c040">${h.odds!=null?h.odds:'-'}</td>
+      <td style="color:#aaa">${h.pop!=null?h.pop+'人':'-'}</td>
+      <td style="font-size:0.74rem">${chakuStr}</td>
+      <td>${h.cc}/${h.runs.length}</td>
+      <td>${h.ba==99?'-':h.ba}<br><span style="font-size:0.68rem;color:${h.closerHasKick?'#6c6':'#888'}">差${h.basa==99?'-':h.basa}</span></td>
+      <td>${dchStr}</td>
+      <td>${wdStr}</td>
+      <td style="color:${sr<=3?'#c8f':'#999'}">${h.saVal!=null?h.saVal:'-'}${h.saFromRuns?'<span style="color:#e9a;font-size:0.6rem">*</span>':''}<span style="color:#666">(${sr})</span></td>
+      <td style="color:${tr<=3?'#6cf':'#999'}">${h.tsaVal!=null?h.tsaVal:'-'}<span style="color:#666">(${tr})</span></td>
+    </tr>`;
+  });
+  html+=`<div class="sec">全馬評価（評価＝総合順位／着＝近走着順 新→古／勝＝勝負所で前にいた回数）</div>
+    <div class="tbl-scroll"><table>
+      <thead><tr><th>番</th><th>印</th><th>評価</th><th>馬名</th><th>脚質</th><th>騎手</th><th>オッズ</th><th>人気</th><th>近走着</th><th>勝負所</th><th>上り/3F差</th><th>距離</th><th>馬体</th><th>SA</th><th>TSA</th></tr></thead>
+      <tbody>${rows}</tbody></table></div>`;
+
+  document.getElementById('out').innerHTML=html;
+}
+
+document.getElementById('go').addEventListener('click',run);
+document.getElementById('clr').addEventListener('click',()=>{
+  document.getElementById('inp').value='';
+  document.getElementById('ri').innerHTML='';
+  document.getElementById('out').innerHTML='';
+});
+</script>
+</body>
+</html>
